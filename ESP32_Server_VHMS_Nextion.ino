@@ -103,19 +103,59 @@ void displayDataOnNextion(String data) {
   }
   parts[index] = data;
 
-  // Tampilkan data pada Nextion
+  // Tampilkan nama unit pada Nextion
   TxtUnit.setText(parts[5].c_str());  // Nama dump truck
-  TxtPLM.setText(parts[4].c_str());  // Payload
 
+  // Tampilkan payload pada Nextion
+  TxtPLM.setText(parts[4].c_str());
+  float payload = parts[4].toFloat();
+  GaugePLM.setValue(mapGaugeValue(payload, 0, 101.1, 0, 180));  // Pemetaan payload
+
+  // Tampilkan tekanan FL pada Nextion
   TxtFL.setText(parts[0].c_str());
-  GaugeFL.setValue(parts[0].toInt());
+  float pressureFL = parts[0].toFloat();
+  GaugeFL.setValue(mapGaugeValue(pressureFL, 0, 99.99, 0, 180));  // Pemetaan FL
 
+  // Tampilkan tekanan FR pada Nextion
   TxtFR.setText(parts[1].c_str());
-  GaugeFR.setValue(parts[1].toInt());
+  float pressureFR = parts[1].toFloat();
+  GaugeFR.setValue(mapGaugeValue(pressureFR, 0, 99.99, 0, 180));  // Pemetaan FR
 
+  // Tampilkan tekanan RL pada Nextion
   TxtRL.setText(parts[2].c_str());
-  GaugeRL.setValue(parts[2].toInt());
+  float pressureRL = parts[2].toFloat();
+  GaugeRL.setValue(mapGaugeValue(pressureRL, 0, 99.99, 0, 180));  // Pemetaan RL
 
+  // Tampilkan tekanan RR pada Nextion
   TxtRR.setText(parts[3].c_str());
-  GaugeRR.setValue(parts[3].toInt());
+  float pressureRR = parts[3].toFloat();
+  GaugeRR.setValue(mapGaugeValue(pressureRR, 0, 99.99, 0, 180));  // Pemetaan RR
 }
+
+// Fungsi untuk memetakan nilai sensor ke nilai gauge
+int mapGaugeValue(float value, float in_min, float in_max, int out_min, int out_max) {
+  if (value < in_min) value = in_min;
+  if (value > in_max) value = in_max;
+  return (int)((value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min);
+}
+
+//Penjelasan Modifikasi
+//Pemetaan Payload dan Tekanan:
+
+//Fungsi mapGaugeValue() digunakan untuk memetakan nilai sensor ke rentang gauge (0–180).
+//parts[0] hingga parts[3] adalah tekanan (FL, FR, RL, RR) dalam satuan MPa.
+//parts[4] adalah payload dalam satuan ton.
+//Konversi String ke Float:
+
+//Fungsi .toFloat() digunakan untuk mengonversi string menjadi angka desimal (float).
+//Penanganan Batas Nilai:
+
+//Jika nilai tekanan atau payload melebihi rentang maksimal, fungsi mapGaugeValue() akan memastikan nilainya tetap dalam batasan gauge.
+//Contoh Input dan Output
+//Input data: 3.25-3.50-2.75-3.00-10.5-HD78101KM
+//Gauge akan:
+//FL: 3.25 MPa → Dikonversi menjadi ~5° pada gauge
+//FR: 3.50 MPa → Dikonversi menjadi ~6° pada gauge
+//RL: 2.75 MPa → Dikonversi menjadi ~4° pada gauge
+//RR: 3.00 MPa → Dikonversi menjadi ~5° pada gauge
+//Payload: 10.5 ton → Dikonversi menjadi ~19° pada gauge
