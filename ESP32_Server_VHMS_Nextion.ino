@@ -59,78 +59,90 @@ void setup() {
 }
 
 void loop() {
-  WiFiClient client = server.available();
+    WiFiClient client = server.available();
 
-  if (client) {
-    TxtStatus.setText("C-Connected");  // Tampilkan status koneksi di Nextion
-    lastDataTime = millis();  // Setel waktu koneksi dimulai
-      
-    while (client.connected()) {
-      if (client.available()) {
-        String data = client.readStringUntil('\n');
-        data.trim();  // Menghapus spasi ekstra
-        Serial.println("Received: " + data);
+    if (client) {
+        TxtStatus.setText("C-Connected");  // Status koneksi
+        lastDataTime = millis();  // Setel waktu koneksi dimulai
 
-        lastDataTime = millis();  // Perbarui waktu terakhir data diterima
-        
-        // Proses data dan langsung tampilkan di Nextion
-        displayDataOnNextion(data);
-      }
+        while (client.connected()) {
+            if (client.available()) {
+                String data = client.readStringUntil('\n');
+                data.trim();  // Menghapus spasi ekstra
 
-      if (millis() - lastDataTime > timeoutInterval) {
-        Serial.println("Client disconnected due to timeout.");
-        client.stop();
-        TxtStatus.setText("C-Timeout");  // Status timeout
-        break;
-      }
+                // Debug untuk memeriksa data yang diterima
+                Serial.println("Received Data: " + data);
+
+                // Validasi panjang data
+                if (data.length() > 0) {
+                    displayDataOnNextion(data);
+                } else {
+                    Serial.println("Data kosong diterima, melewati update.");
+                }
+
+                lastDataTime = millis();  // Perbarui waktu terakhir data diterima
+            }
+
+            if (millis() - lastDataTime > timeoutInterval) {
+                Serial.println("Client disconnected due to timeout.");
+                client.stop();
+                TxtStatus.setText("C-Timeout");  // Status timeout
+                break;
+            }
+        }
+
+        if (!client.connected()) {
+            TxtStatus.setText("Waiting for data");  // Status menunggu data
+        }
     }
-
-    if (!client.connected()) {
-      TxtStatus.setText("Waiting for data");  // Status menunggu data
-    }
-  }
 }
+
 
 void displayDataOnNextion(String data) {
-  // Memisahkan data berdasarkan delimiter '-'
-  int index = 0;
-  String parts[6];
-  while (data.indexOf('-') > 0 && index < 5) {
-    int pos = data.indexOf('-');
-    parts[index] = data.substring(0, pos);
-    data = data.substring(pos + 1);
-    index++;
-  }
-  parts[index] = data;
+    // Array untuk menampung hasil parsing, dengan default nilai kosong
+    String parts[6] = {"0", "0", "0", "0", "0", "HD78101KM"};  // Default values
 
-  // Tampilkan nama unit pada Nextion
-  TxtUnit.setText(parts[5].c_str());  // Nama dump truck
+    // Parsing data
+    int index = 0;
+    while (data.indexOf('-') > 0 && index < 5) {
+        int pos = data.indexOf('-');
+        parts[index] = data.substring(0, pos);
+        data = data.substring(pos + 1);
+        index++;
+    }
+    parts[index] = data; // Isi elemen terakhir
 
-  // Tampilkan payload pada Nextion
-  TxtPLM.setText(parts[4].c_str());
-  float payload = parts[4].toFloat();
-  GaugePLM.setValue(mapGaugeValue(payload, 0, 101.1, 0, 180));  // Pemetaan payload
+    // Pastikan semua bagian memiliki nilai (jika kosong, gunakan default)
+    for (int i = 0; i <= 5; i++) {
+        if (parts[i] == "") {
+            parts[i] = (i == 5) ? "HD78101KM" : "0";  // Nama unit tetap, data lainnya default 0
+        }
+    }
 
-  // Tampilkan tekanan FL pada Nextion
-  TxtFL.setText(parts[0].c_str());
-  float pressureFL = parts[0].toFloat();
-  GaugeFL.setValue(mapGaugeValue(pressureFL, 0, 99.99, 0, 180));  // Pemetaan FL
+    // Tampilkan data di Nextion
+    TxtUnit.setText(parts[5].c_str());  // Nama dump truck
+    TxtPLM.setText(parts[4].c_str());  // Payload
 
-  // Tampilkan tekanan FR pada Nextion
-  TxtFR.setText(parts[1].c_str());
-  float pressureFR = parts[1].toFloat();
-  GaugeFR.setValue(mapGaugeValue(pressureFR, 0, 99.99, 0, 180));  // Pemetaan FR
+    float payload = parts[4].toFloat();
+    GaugePLM.setValue(mapGaugeValue(payload, 0, 101.1, 0, 180));  // Pemetaan payload
 
-  // Tampilkan tekanan RL pada Nextion
-  TxtRL.setText(parts[2].c_str());
-  float pressureRL = parts[2].toFloat();
-  GaugeRL.setValue(mapGaugeValue(pressureRL, 0, 99.99, 0, 180));  // Pemetaan RL
+    TxtFL.setText(parts[0].c_str());   // Tekanan FL
+    float pressureFL = parts[0].toFloat();
+    GaugeFL.setValue(mapGaugeValue(pressureFL, 0, 99.99, 0, 180));
 
-  // Tampilkan tekanan RR pada Nextion
-  TxtRR.setText(parts[3].c_str());
-  float pressureRR = parts[3].toFloat();
-  GaugeRR.setValue(mapGaugeValue(pressureRR, 0, 99.99, 0, 180));  // Pemetaan RR
+    TxtFR.setText(parts[1].c_str());   // Tekanan FR
+    float pressureFR = parts[1].toFloat();
+    GaugeFR.setValue(mapGaugeValue(pressureFR, 0, 99.99, 0, 180));
+
+    TxtRL.setText(parts[2].c_str());   // Tekanan RL
+    float pressureRL = parts[2].toFloat();
+    GaugeRL.setValue(mapGaugeValue(pressureRL, 0, 99.99, 0, 180));
+
+    TxtRR.setText(parts[3].c_str());   // Tekanan RR
+    float pressureRR = parts[3].toFloat();
+    GaugeRR.setValue(mapGaugeValue(pressureRR, 0, 99.99, 0, 180));
 }
+
 
 // Fungsi untuk memetakan nilai sensor ke nilai gauge
 int mapGaugeValue(float value, float in_min, float in_max, int out_min, int out_max) {
@@ -159,3 +171,18 @@ int mapGaugeValue(float value, float in_min, float in_max, int out_min, int out_
 //RL: 2.75 MPa → Dikonversi menjadi ~4° pada gauge
 //RR: 3.00 MPa → Dikonversi menjadi ~5° pada gauge
 //Payload: 10.5 ton → Dikonversi menjadi ~19° pada gauge
+
+
+//--commit ke 2
+// Penjelasan Perbaikan pada void loop() dan void displayDataOnNextion()
+// Penanganan Elemen Kosong
+
+// Setiap elemen parts[] diperiksa. Jika ada elemen kosong (""), diisi dengan nilai default:
+// "0" untuk angka.
+// "HD78101KM" untuk nama unit (atau string lain yang sesuai).
+// Validasi Panjang Data
+
+// Sebelum parsing data, panjang data diperiksa. Data kosong tidak akan diproses.
+// Debug Log
+
+// Menambahkan log debug menggunakan Serial.println() untuk memantau data yang diterima.
