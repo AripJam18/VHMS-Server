@@ -1,15 +1,19 @@
 #include <WiFi.h>
-#include "Nextion.h"  // Library untuk Nextion
+#include "Nextion.h"  
+#include <SD.h>  // Library SD card
 
 // Konfigurasi Wi-Fi
 const char* ssid = "ESP32-Server";
 const char* password = "password123";
 
-WiFiServer server(80);  // Membuat server di port 80
+WiFiServer server(80);  
+
+// Konfigurasi SD Card
+#define CS_PIN 5  // Pin CS untuk SD Card
 
 // Pin untuk komunikasi serial dengan Nextion
-#define RXD2 16  // Pin RX (hubungkan kabel kuning Nextion ke sini)
-#define TXD2 17  // Pin TX (hubungkan kabel biru Nextion ke sini)
+#define RXD2 16  
+#define TXD2 17  
 HardwareSerial mySerial(2);
 
 // Objek Nextion untuk Gauge dan Text
@@ -31,127 +35,159 @@ NexText TxtRR = NexText(0, 10, "TxtRR");
 NexText TxtUnit = NexText(0, 11, "TxtUnit");
 NexText TxtStatus = NexText(0, 12, "TxtStatus");
 
-// Variabel waktu untuk koneksi
 unsigned long lastDataTime = 0;
-const unsigned long timeoutInterval = 5000;  // Timeout 5 detik
+const unsigned long timeoutInterval = 5000;
 
 void setup() {
   Serial.begin(115200);
-  
-  // Mengaktifkan mode Access Point (AP)
+
+  // Wi-Fi setup
   WiFi.softAP(ssid, password);
   Serial.println("Access Point Started");
-  
-  // Mendapatkan dan menampilkan alamat IP dari Access Point
-  IPAddress IP = WiFi.softAPIP();
-  Serial.print("IP Address: ");
-  Serial.println(IP);
-  
-  // Memulai server
+  Serial.println(WiFi.softAPIP());
   server.begin();
-  Serial.println("Waiting for data...");
 
-  // Konfigurasi Nextion
-  mySerial.begin(9600, SERIAL_8N1, RXD2, TXD2);  // UART untuk Nextion
+  // Nextion setup
+  mySerial.begin(9600, SERIAL_8N1, RXD2, TXD2);
   nexSerial = mySerial;
   nexInit();
   TxtStatus.setText("System Started");
+
+  // SD Card setup
+  if (!SD.begin(CS_PIN)) {
+    Serial.println("SD Card Initialization failed!");
+    TxtStatus.setText("SD Error");
+    while (true);  // Stop program if SD Card not initialized
+  }
+  Serial.println("SD Card initialized.");
+  TxtStatus.setText("SD Ready");
+
+  // Buat file CSV jika belum ada
+  if (!SD.exists("/data.csv")) {
+    File file = SD.open("/data.csv", FILE_WRITE);
+    if (file) {
+      file.println("CLIENT,DATE,TIME,RIT,PAYLOAD");  // Header kolom
+      file.close();
+    } else {
+      Serial.println("Failed to create file.");
+    }
+  }
 }
 
-void loop() {
-    WiFiClient client = server.available();
+void loop() { 
+  WiFiClient client = server.available();
 
-    if (client) {
-        TxtStatus.setText("C-Connected");  // Status koneksi
-        lastDataTime = millis();  // Setel waktu koneksi dimulai
+  if (client) {
+    TxtStatus.setText("C-Connected");
+    lastDataTime = millis();
 
-        while (client.connected()) {
-            if (client.available()) {
-                String data = client.readStringUntil('\n');
-                data.trim();  // Menghapus spasi ekstra
+    while (client.connected()) {
+      if (client.available()) {
+        String data = client.readStringUntil('\n');
+        data.trim();
 
-                // Debug untuk memeriksa data yang diterima
-                Serial.println("Received Data: " + data);
+        Serial.println("Received Data: " + data);
 
-                // Validasi panjang data
-                if (data.length() > 0) {
-                    displayDataOnNextion(data);
-                } else {
-                    Serial.println("Data kosong diterima, melewati update.");
-                }
-
-                lastDataTime = millis();  // Perbarui waktu terakhir data diterima
-            }
-
-            if (millis() - lastDataTime > timeoutInterval) {
-                Serial.println("Client disconnected due to timeout.");
-                client.stop();
-                TxtStatus.setText("C-Timeout");  // Status timeout
-                break;
-            }
+        if (data.length() > 0) {
+          displayDataOnNextion(data);  // Proses dan simpan data ke SD Card
         }
 
-        if (!client.connected()) {
-            TxtStatus.setText("Waiting for data");  // Status menunggu data
-        }
+        lastDataTime = millis();
+      }
+
+      if (millis() - lastDataTime > timeoutInterval) {
+        Serial.println("Client disconnected due to timeout.");
+        client.stop();
+        TxtStatus.setText("C-Timeout");
+        break;
+      }
     }
+
+    if (!client.connected()) {
+      TxtStatus.setText("Waiting for data");
+    }
+  }
 }
 
 
 void displayDataOnNextion(String data) {
-    // Array untuk menampung hasil parsing, dengan default nilai kosong
-    String parts[6] = {"0", "0", "0", "0", "0", "HD78101KM"};  // Default values
+  String parts[6] = {"0", "0", "0", "0", "0", "HD78101KM"};  // Default values
 
-    // Parsing data
-    int index = 0;
-    while (data.indexOf('-') > 0 && index < 5) {
-        int pos = data.indexOf('-');
-        parts[index] = data.substring(0, pos);
-        data = data.substring(pos + 1);
-        index++;
+  // Parsing data
+  int index = 0;
+  while (data.indexOf('-') > 0 && index < 5) {
+    int pos = data.indexOf('-');
+    parts[index] = data.substring(0, pos);
+    data = data.substring(pos + 1);
+    index++;
+  }
+  parts[index] = data; // Isi elemen terakhir
+
+  // Pastikan semua bagian memiliki nilai (jika kosong, gunakan default)
+  for (int i = 0; i <= 5; i++) {
+    if (parts[i] == "") {
+      parts[i] = (i == 5) ? "HD78101KM" : "0";  // Nama unit tetap, data lainnya default 0
     }
-    parts[index] = data; // Isi elemen terakhir
+  }
 
-    // Pastikan semua bagian memiliki nilai (jika kosong, gunakan default)
-    for (int i = 0; i <= 5; i++) {
-        if (parts[i] == "") {
-            parts[i] = (i == 5) ? "HD78101KM" : "0";  // Nama unit tetap, data lainnya default 0
-        }
-    }
+  // Tampilkan data di Nextion
+  TxtUnit.setText(parts[5].c_str());  // Nama dump truck
+  TxtPLM.setText(parts[4].c_str());  // Payload
 
-    // Tampilkan data di Nextion
-    TxtUnit.setText(parts[5].c_str());  // Nama dump truck
-    TxtPLM.setText(parts[4].c_str());  // Payload
+  float payload = parts[4].toFloat();
+  GaugePLM.setValue(mapGaugeValue(payload, 0, 101.1, 0, 180));  // Pemetaan payload
 
-    float payload = parts[4].toFloat();
-    GaugePLM.setValue(mapGaugeValue(payload, 0, 101.1, 0, 180));  // Pemetaan payload
+  TxtFL.setText(parts[0].c_str());   // Tekanan FL
+  float pressureFL = parts[0].toFloat();
+  GaugeFL.setValue(mapGaugeValue(pressureFL, 0, 99.99, 0, 180));
 
-    TxtFL.setText(parts[0].c_str());   // Tekanan FL
-    float pressureFL = parts[0].toFloat();
-    GaugeFL.setValue(mapGaugeValue(pressureFL, 0, 99.99, 0, 180));
+  TxtFR.setText(parts[1].c_str());   // Tekanan FR
+  float pressureFR = parts[1].toFloat();
+  GaugeFR.setValue(mapGaugeValue(pressureFR, 0, 99.99, 0, 180));
 
-    TxtFR.setText(parts[1].c_str());   // Tekanan FR
-    float pressureFR = parts[1].toFloat();
-    GaugeFR.setValue(mapGaugeValue(pressureFR, 0, 99.99, 0, 180));
+  TxtRL.setText(parts[2].c_str());   // Tekanan RL
+  float pressureRL = parts[2].toFloat();
+  GaugeRL.setValue(mapGaugeValue(pressureRL, 0, 99.99, 0, 180));
 
-    TxtRL.setText(parts[2].c_str());   // Tekanan RL
-    float pressureRL = parts[2].toFloat();
-    GaugeRL.setValue(mapGaugeValue(pressureRL, 0, 99.99, 0, 180));
+  TxtRR.setText(parts[3].c_str());   // Tekanan RR
+  float pressureRR = parts[3].toFloat();
+  GaugeRR.setValue(mapGaugeValue(pressureRR, 0, 99.99, 0, 180));
 
-    TxtRR.setText(parts[3].c_str());   // Tekanan RR
-    float pressureRR = parts[3].toFloat();
-    GaugeRR.setValue(mapGaugeValue(pressureRR, 0, 99.99, 0, 180));
+  // Simpan data ke SD Card
+  saveDataToSD(parts);
 }
 
 
-// Fungsi untuk memetakan nilai sensor ke nilai gauge
+void saveDataToSD(String parts[]) {
+  File file = SD.open("/data.csv", FILE_APPEND);
+  if (file) {
+    // Ambil nilai CLIENT dan PAYLOAD dari parts[]
+    String client = parts[5];           // CLIENT dari parts[5]
+    String payload = parts[4] + "t";    // PAYLOAD dari parts[4] dengan 't' di akhir
+
+    // Format baris data
+    String dataLine = client + ",30-11-2024,09:30,1," + payload;
+
+    // Simpan data ke file CSV
+    file.println(dataLine);
+    file.close();
+
+    Serial.println("Data saved: " + dataLine);
+  } else {
+    Serial.println("Failed to open file for writing.");
+  }
+}
+
+
 int mapGaugeValue(float value, float in_min, float in_max, int out_min, int out_max) {
   if (value < in_min) value = in_min;
   if (value > in_max) value = in_max;
   return (int)((value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min);
 }
 
+
 //Penjelasan Modifikasi
+//--commit ke 1
 //Pemetaan Payload dan Tekanan:
 
 //Fungsi mapGaugeValue() digunakan untuk memetakan nilai sensor ke rentang gauge (0–180).
@@ -186,3 +222,23 @@ int mapGaugeValue(float value, float in_min, float in_max, int out_min, int out_
 // Debug Log
 
 // Menambahkan log debug menggunakan Serial.println() untuk memantau data yang diterima.
+
+//--commit ke 3
+// Penambahan fungsi simpan data ke SD Card
+// Inisialisasi SD Card:
+
+// SD.begin(CS_PIN) digunakan untuk menginisialisasi SD Card.
+// Jika SD Card gagal diinisialisasi, program akan berhenti untuk mencegah kerusakan data.
+// Pembuatan File CSV:
+
+// Jika file /data.csv belum ada, header kolom dibuat di file CSV.
+// Fungsi saveDataToSD:
+
+// Membuka file CSV dalam mode append dan menambahkan baris data baru dalam format:
+// CLIENT,DATE,TIME,RIT,PAYLOAD
+// CLIENT diambil dari TxtUnit.
+// PAYLOAD diambil dari TxtPLM.
+// Nilai DATE, TIME, dan RIT saat ini dibuat statik.
+// Penanganan Kesalahan:
+
+// Jika file gagal dibuka untuk penulisan, pesan kesalahan akan dicetak ke serial monitor.
