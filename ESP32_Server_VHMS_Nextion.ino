@@ -1,80 +1,62 @@
 #include <WiFi.h>
-#include "Nextion.h"  
-#include <SD.h>  // Library SD card
+#include <SPI.h>
+#include <SD.h>
+#include "Nextion.h"  // Library untuk Nextion
 
 // Konfigurasi Wi-Fi
 const char* ssid = "ESP32-Server";
 const char* password = "password123";
-
-WiFiServer server(80);  
-
-// Konfigurasi SD Card
-#define CS_PIN 5  // Pin CS untuk SD Card
+WiFiServer server(80); // Membuat server di port 80
 
 // Pin untuk komunikasi serial dengan Nextion
-#define RXD2 16  
-#define TXD2 17  
+#define RXD2 16  // Pin RX (hubungkan kabel kuning Nextion ke sini)
+#define TXD2 17  // Pin TX (hubungkan kabel biru Nextion ke sini)
 HardwareSerial mySerial(2);
 
-// Objek Nextion untuk Gauge dan Text
-NexGauge GaugeFL = NexGauge(0, 1, "GaugeFL");
-NexText TxtFL = NexText(0, 6, "TxtFL");
+// Konfigurasi SD Card
+#define SD_CS 5 // Pin CS untuk SD Card
 
-NexGauge GaugeRL = NexGauge(0, 2, "GaugeRL");
-NexText TxtRL = NexText(0, 7, "TxtRL");
-
+// Objek Nextion
 NexGauge GaugePLM = NexGauge(0, 3, "GaugePLM");
 NexText TxtPLM = NexText(0, 8, "TxtPLM");
-
-NexGauge GaugeFR = NexGauge(0, 4, "GaugeFR");
-NexText TxtFR = NexText(0, 9, "TxtFR");
-
-NexGauge GaugeRR = NexGauge(0, 5, "GaugeRR");
-NexText TxtRR = NexText(0, 10, "TxtRR");
-
 NexText TxtUnit = NexText(0, 11, "TxtUnit");
 NexText TxtStatus = NexText(0, 12, "TxtStatus");
 
+// Variabel waktu untuk koneksi
 unsigned long lastDataTime = 0;
-const unsigned long timeoutInterval = 5000;
+const unsigned long timeoutInterval = 5000;  // Timeout 5 detik
 
 void setup() {
   Serial.begin(115200);
 
-  // Wi-Fi setup
+  // Wi-Fi Access Point
   WiFi.softAP(ssid, password);
   Serial.println("Access Point Started");
-  Serial.println(WiFi.softAPIP());
-  server.begin();
+  IPAddress IP = WiFi.softAPIP();
+  Serial.print("IP Address: ");
+  Serial.println(IP);
 
-  // Nextion setup
-  mySerial.begin(9600, SERIAL_8N1, RXD2, TXD2);
+  // Server start
+  server.begin();
+  Serial.println("Waiting for data...");
+
+  // Nextion
+  mySerial.begin(9600, SERIAL_8N1, RXD2, TXD2);  // UART untuk Nextion
   nexSerial = mySerial;
   nexInit();
   TxtStatus.setText("System Started");
 
-  // SD Card setup
-  if (!SD.begin(CS_PIN)) {
-    Serial.println("SD Card Initialization failed!");
-    TxtStatus.setText("SD Error");
-    while (true);  // Stop program if SD Card not initialized
-  }
-  Serial.println("SD Card initialized.");
-  TxtStatus.setText("SD Ready");
-
-  // Buat file CSV jika belum ada
-  if (!SD.exists("/data.csv")) {
-    File file = SD.open("/data.csv", FILE_WRITE);
-    if (file) {
-      file.println("CLIENT,DATE,TIME,RIT,PAYLOAD");  // Header kolom
-      file.close();
-    } else {
-      Serial.println("Failed to create file.");
-    }
+  // Inisialisasi SPI dan SD card
+  SPI.begin(18, 19, 23, SD_CS); // SCK, MISO, MOSI, CS
+  if (SD.begin(SD_CS)) {
+    Serial.println("SD card successfully mounted.");
+  } else {
+    Serial.println("Failed to mount SD card.");
+    TxtStatus.setText("SD Mount Failed");
   }
 }
 
-void loop() { 
+void loop() {
   WiFiClient client = server.available();
 
   if (client) {
@@ -89,7 +71,7 @@ void loop() {
         Serial.println("Received Data: " + data);
 
         if (data.length() > 0) {
-          displayDataOnNextion(data);  // Proses dan simpan data ke SD Card
+          displayDataOnNextion(data);
         }
 
         lastDataTime = millis();
@@ -109,11 +91,9 @@ void loop() {
   }
 }
 
-
 void displayDataOnNextion(String data) {
-  String parts[6] = {"0", "0", "0", "0", "0", "HD78101KM"};  // Default values
-
   // Parsing data
+  String parts[6] = {"0", "0", "0", "0", "0", "HD78101KM"};
   int index = 0;
   while (data.indexOf('-') > 0 && index < 5) {
     int pos = data.indexOf('-');
@@ -121,69 +101,55 @@ void displayDataOnNextion(String data) {
     data = data.substring(pos + 1);
     index++;
   }
-  parts[index] = data; // Isi elemen terakhir
+  parts[index] = data;
 
-  // Pastikan semua bagian memiliki nilai (jika kosong, gunakan default)
   for (int i = 0; i <= 5; i++) {
     if (parts[i] == "") {
-      parts[i] = (i == 5) ? "HD78101KM" : "0";  // Nama unit tetap, data lainnya default 0
+      parts[i] = (i == 5) ? "HD78101KM" : "0";
     }
   }
 
-  // Tampilkan data di Nextion
-  TxtUnit.setText(parts[5].c_str());  // Nama dump truck
-  TxtPLM.setText(parts[4].c_str());  // Payload
+  TxtUnit.setText(parts[5].c_str());
+  TxtPLM.setText(parts[4].c_str());
 
   float payload = parts[4].toFloat();
-  GaugePLM.setValue(mapGaugeValue(payload, 0, 101.1, 0, 180));  // Pemetaan payload
-
-  TxtFL.setText(parts[0].c_str());   // Tekanan FL
-  float pressureFL = parts[0].toFloat();
-  GaugeFL.setValue(mapGaugeValue(pressureFL, 0, 99.99, 0, 180));
-
-  TxtFR.setText(parts[1].c_str());   // Tekanan FR
-  float pressureFR = parts[1].toFloat();
-  GaugeFR.setValue(mapGaugeValue(pressureFR, 0, 99.99, 0, 180));
-
-  TxtRL.setText(parts[2].c_str());   // Tekanan RL
-  float pressureRL = parts[2].toFloat();
-  GaugeRL.setValue(mapGaugeValue(pressureRL, 0, 99.99, 0, 180));
-
-  TxtRR.setText(parts[3].c_str());   // Tekanan RR
-  float pressureRR = parts[3].toFloat();
-  GaugeRR.setValue(mapGaugeValue(pressureRR, 0, 99.99, 0, 180));
+  GaugePLM.setValue(mapGaugeValue(payload, 0, 101.1, 0, 180));
 
   // Simpan data ke SD Card
   saveDataToSD(parts);
 }
-
-
-void saveDataToSD(String parts[]) {
-  File file = SD.open("/data.csv", FILE_APPEND);
-  if (file) {
-    // Ambil nilai CLIENT dan PAYLOAD dari parts[]
-    String client = parts[5];           // CLIENT dari parts[5]
-    String payload = parts[4] + "t";    // PAYLOAD dari parts[4] dengan 't' di akhir
-
-    // Format baris data
-    String dataLine = client + ",30-11-2024,09:30,1," + payload;
-
-    // Simpan data ke file CSV
-    file.println(dataLine);
-    file.close();
-
-    Serial.println("Data saved: " + dataLine);
-  } else {
-    Serial.println("Failed to open file for writing.");
-  }
-}
-
 
 int mapGaugeValue(float value, float in_min, float in_max, int out_min, int out_max) {
   if (value < in_min) value = in_min;
   if (value > in_max) value = in_max;
   return (int)((value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min);
 }
+
+void saveDataToSD(String parts[]) {
+  // Format: CLIENT,DATE,TIME,RIT,PAYLOAD
+  const char* filename = "/data.csv";
+  File file = SD.open(filename, FILE_APPEND);
+
+  if (!file) {
+    Serial.println("Failed to open file for writing.");
+    TxtStatus.setText("SD Write Failed");
+    return;
+  }
+
+  String date = "30-11-2024";
+  String time = "09:30";
+  String rit = "1";
+  String client = parts[5];
+  String payload = parts[4] + "t";
+
+  String dataLine = client + "," + date + "," + time + "," + rit + "," + payload + "\n";
+  file.print(dataLine);
+
+  Serial.println("Data saved to SD card: " + dataLine);
+  TxtStatus.setText("Data Saved");
+  file.close();
+}
+
 
 
 //Penjelasan Modifikasi
@@ -242,3 +208,6 @@ int mapGaugeValue(float value, float in_min, float in_max, int out_min, int out_
 // Penanganan Kesalahan:
 
 // Jika file gagal dibuka untuk penulisan, pesan kesalahan akan dicetak ke serial monitor.
+
+//--commit ke 4
+//Penambahan pesan "SD Card Mounted" pada Txt Status dan penambahan inisialisasi SD Card pada void Setup juga ada penambahan library SPI.h
